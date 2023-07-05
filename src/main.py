@@ -4,6 +4,7 @@ from pygame.locals import *
 import random
 import sys
 import os
+
 pygame.init()
 pygame.mixer.init()
 
@@ -12,11 +13,9 @@ pygame.mixer.init()
 ######## This is player version ###########
 
 #### CONSTANT setup for screen display :#####
-WIDTH = 864
-HEIGHT = 936
+WIDTH = 800
+HEIGHT = 900
 WIN = pygame.display.set_mode((WIDTH, HEIGHT))
-LOGO = pygame.image.load(os.path.join("assets", "Flappy_Logo.png"))
-pygame.display.set_icon(LOGO)
 pygame.display.set_caption("FLAPPY BIRD DEMO1")
 
 #### Game variables fps, ground scroll, etc...####
@@ -30,12 +29,22 @@ game_over = False
 pipe_gap = 150
 pipe_frequency = 1000  # milliseconds
 last_pipe = pygame.time.get_ticks()
-collide = True
+collide = False
 is_stop = False
+pass_pipe = False
+level = 1
+score = 0
+font = pygame.font.SysFont('Bauhaus 93', 60)
+white = (255, 255, 255)
+red = (255,0,0)
+pipes_passed = 0
+pipe_level_threshold = 10
+pipe_speed_increase = .5
 
 
 #### ALL THE IMAGE PIPE, GROUND, BACKGROUND, etc....#####
 BG = pygame.image.load(os.path.join("assets", "bg.png"))
+LOGO = pygame.image.load(os.path.join("assets","Flappy_Logo.png"))
 GROUND = pygame.image.load(os.path.join("assets", "ground.png"))
 PIPE = pygame.image.load(os.path.join('assets', "pipe.png"))
 MESSAGE = pygame.transform.scale(pygame.image.load(
@@ -43,6 +52,8 @@ MESSAGE = pygame.transform.scale(pygame.image.load(
 INTRO_MUSIC = pygame.mixer.Sound(os.path.join('sound', "INTROMUSIC.mp3"))
 WAV = pygame.mixer.Sound(os.path.join('sound', "wing.wav"))
 HIT = pygame.mixer.Sound(os.path.join('sound', 'hit.wav'))
+BUTTON = pygame.image.load(os.path.join("assets", "restart.png"))
+pygame.display.set_icon(LOGO)
 
 #### Create a Bird class: ####
 
@@ -108,12 +119,11 @@ class Bird(pygame.sprite.Sprite):
             #### jumping movement: using mouse clicked to move up the flappy or Space ####
             if is_stop == False:
                 if pygame.mouse.get_pressed()[0] == 1 and self.clicked == 0:
-                    self.vel = -10.5
+                    self.vel = -8
                     self.clicked = 1
                     WAV.play()
                 if pygame.key.get_pressed()[pygame.K_SPACE] and self.clicked == 0:
-                    self.vel = -10.5
-                    self.clicked = 1
+                    self.vel = -5
                     WAV.play()
                 if pygame.mouse.get_pressed()[0] == 0:
                     self.clicked = 0
@@ -125,7 +135,6 @@ class Bird(pygame.sprite.Sprite):
         WIN.blit(rotated_image, new_rect)
 
 ##### Create a Pipe class: #####
-
 
 class Pipe(pygame.sprite.Sprite):
     def __init__(self, x, y, position):
@@ -148,6 +157,27 @@ class Pipe(pygame.sprite.Sprite):
             self.kill()
 
 
+class Button():
+    def __init__(self, x, y, image):
+        self.image = image
+        self.rect = self.image.get_rect()
+        self.rect.topleft = (x, y)
+
+    def draw(self):
+        action = False
+        # get mouse position
+        pos = pygame.mouse.get_pos()
+        # check if mouse is over the button
+        if self.rect.collidepoint(pos):
+            if pygame.mouse.get_pressed()[0] == 1:
+                action = True
+
+        # draw button
+        WIN.blit(self.image, (self.rect.x, self.rect.y))
+
+        return action
+
+
 ##### Sprite Group bird, pipe, etc...: #####
 bird_group = pygame.sprite.Group()
 pipe_group = pygame.sprite.Group()
@@ -163,6 +193,13 @@ def flash_screen():
     flash.fill((255, 255, 255))
     WIN.blit(flash, (0, 0))
     pygame.display.update()
+
+# draw a text onto a screen:
+
+
+def draw_text(text, font, text_col, x, y):
+    img = font.render(text, True, text_col)
+    WIN.blit(img, (x, y))
 
 ### ======STARTING MENU========#####
 
@@ -216,16 +253,39 @@ def welcome_screen():
         pygame.display.update()
         clock.tick(fps)
 
-#### =========EXIT MENU========####
+# Load the highest score from a file
 
 
-def gameOver():
-    """
-    This game over menu will pop up when the bird collide with pipe or ground.
-    """
+def load_high_score():
+    if not os.path.exists('highscore.txt'):
+        return 0
+
+    with open('highscore.txt', 'r') as file:
+        try:
+            high_score = int(file.read())
+            return high_score
+        except ValueError:
+            return 0
+
+
+# Save the new high score to a file
+
+def save_high_score(score):
+    with open('highscore.txt', 'w') as file:
+        file.write(str(score))
+
+#### =========reset game========####
+
+
+def reset_game():
     # Reset all the variables to zero to reset the game :
+    global ground_vel, pipes_passed, pipe_level_threshold, level
     pipe_group.empty()
+    pipes_passed = 0
+    pipe_level_threshold = 10
+    level = 1
     score = 0
+    ground_vel = 5
     flappy.rect.y = HEIGHT//2
     flappy.rect.x = 100
     return score
@@ -237,8 +297,11 @@ def main():
     """
     main function where the game is running.
     """
+    button = Button(WIDTH // 2 - 100, HEIGHT // 2 - 100, BUTTON)
+    high_score = load_high_score()
     global ground_scroll, ground_vel, game_over, flying, last_pipe,\
-        pipe_frequency, collide, is_stop
+        pipe_frequency, collide, is_stop, pass_pipe, score, pipes_passed,\
+        pipe_level_threshold, level, pipe_speed_increase
     run = True
     clock = pygame.time.Clock()
 
@@ -261,6 +324,34 @@ def main():
         WIN.blit(GROUND, (ground_scroll, 732))
         bird_group.update()
 
+        # Check the score:
+        if len(pipe_group) > 0:
+            if bird_group.sprites()[0].rect.left > pipe_group.sprites()[0].rect.left\
+                    and bird_group.sprites()[0].rect.right < pipe_group.sprites()[0].rect.right\
+                    and pass_pipe == False:
+                pass_pipe = True
+        if pass_pipe == True and len(pipe_group) > 0:
+            if bird_group.sprites()[0].rect.left > pipe_group.sprites()[0].rect.right:
+                score += 1
+                pass_pipe = False
+                pipes_passed += 1
+        draw_text(str(score), font, white, int(WIDTH / 2), 20)
+
+        if score > high_score:
+            high_score = score
+            save_high_score(score)
+
+        # Increase level based on pipes passed
+        if pipes_passed >= pipe_level_threshold:
+            level += 1
+            pipe_level_threshold += 10
+            ground_vel += pipe_speed_increase
+            for pipe in pipe_group:
+                pipe.rect.x -= pipe_speed_increase
+        print(f"Level: {level}")
+        print(f"Speed: {ground_vel}")
+        draw_text("level:"+str(level),font, red,int(WIDTH /8),10)
+
         if flappy.rect.bottom > 732 and is_stop == False:
             flash_screen()
             # Set a timer to hide a flash after duration:
@@ -275,19 +366,19 @@ def main():
             flying = False
 
         #### Look for the collision:####
-        if pygame.sprite.groupcollide(bird_group, pipe_group, False, False) and collide == True:
+        if pygame.sprite.groupcollide(bird_group, pipe_group, False, False) and collide == False:
             HIT.play()
             flash_screen()
             #### Set a timer to hide a flash after duration:####
             flash_start = pygame.time.get_ticks()
             while pygame.time.get_ticks() - flash_start < 100:
                 pygame.display.update()
-            collide = False
+            collide = True
             game_over = True
             is_stop = True
 
         if not pygame.sprite.groupcollide(bird_group, pipe_group, False, False):
-            collide = True
+            collide = False
 
         if game_over == False and flying == True:
             #### generate new pipes: ####
@@ -305,6 +396,18 @@ def main():
             if abs(ground_scroll) > 36:
                 ground_scroll = 0
             pipe_group.update()
+
+        # Check the game over and reset
+        if game_over == True:
+            if button.draw() == True:
+                game_over = False
+                is_stop = False
+                score = reset_game()
+            # display the highest score on the screen:
+            score_text = font.render(
+                " Highest score: " + str(high_score), True, white)
+            score_rect = score_text.get_rect(center=(WIDTH // 2, HEIGHT // 3))
+            WIN.blit(score_text, score_rect)
         pygame.display.update()
 
 
